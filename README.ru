@@ -16,8 +16,8 @@
 Диск для записи прошивки необходимо подключить в разъём SATA компьютера, и в терминале выполнить:
 
     cd ~
-    git clone https://github.com/toyan/mybooklive-lede-firmware.git mbl-lede-firmware
-    cd ./mbl-lede-firmware
+    git clone https://github.com/toyan/mybooklive-lede-firmware.git
+    cd ./mybooklive-lede-firmware
     su
     ./mbl-lede-install-ru
 
