@@ -5,8 +5,8 @@
 #
 clear
 echo 
-echo "  Скрипт установки прошивки LEDE для MyBookLive Single"
-echo "  ===================================================="
+echo "  Скрипт установки прошивки LEDE для WD MyBook Live (Single)"
+echo "  =========================================================="
 echo
 
 . ./.fwver
@@ -66,6 +66,10 @@ CDIR="$PWD"
     echo
     [ ! "$KEY" = "y" ] && exit 3
 
+    # Prepare mount point
+    [ ! -d $SDX ] && mkdir -p $SDX
+    mount | grep $SDX >/dev/null && umount $SDX
+
     echo "----- Создание таблицы разделов"
 
     # Оригинальная разметка WD
@@ -123,10 +127,6 @@ CDIR="$PWD"
 
     dd if=/dev/zero of=/dev/${DISK}3 seek=0 bs=4096 count=2 2>/dev/null
     mkswap -L SWAP /dev/${DISK}3 >/dev/null
-
-    # Prepare mount point
-    [ ! -d $SDX ] && mkdir -p $SDX
-    mount | grep $SDX >/dev/null && umount $SDX
 
     echo
     echo "----- Запись прошивки на диск: ROOTFS... "
