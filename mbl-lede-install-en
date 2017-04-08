@@ -1,0 +1,206 @@
+#!/bin/sh
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
+clear
+echo 
+echo "  This is a script for installing LEDE-based firmware for WD MyBookLive (Single) NAS"
+echo "  =================================================================================="
+echo
+
+. ./.fwver
+FWKERN="mbl-lede-kernel.$KERN-ps$PAGESIZE-v$VERS.tar.gz"
+FWROOTFS="mbl-lede-rootfs.$LEDEREL-v$VERS.tar.gz"
+FWFILES="mbl-lede-files.v$VERS.tar.gz"
+SDX="$HOME/mbl-disk-sdx"
+CDIR="$PWD"
+
+    echo
+    echo -n  "----- Checking for required utilities availability... "
+    R=0
+    for F in "sgdisk" "mke2fs" "lsblk"; do
+	E=0
+	IFSSAVE="$IFS"; IFS=":"
+	for P in $PATH; do
+	    if [ -x $P/$F ]; then
+		E=1
+		break
+	    fi
+	done
+	IFS="$IFSSAVE"
+	if [ $E = 0 ]; then
+	    R=1
+	    echo
+	    echo "Required file '$F' not found."
+	fi
+    done
+    [ $R = 1 ] && exit 1
+    echo "OK"
+    echo
+
+    if [ ! -f ./$FWKERN -a -f ./$FWROOTFS -a -f ./$FWFILES ]; then
+	echo
+	echo One or more of the required firmware files are absent.
+	echo
+	exit 2
+    fi
+    echo
+    echo  "  On the next screen will be shown a list of all avilable drives of you system."
+    echo  "  You need to choose a disk on which the firmware will be installed."
+    echo
+    read -p "  Press ENTER to continue..." KEY
+    clear
+    echo
+    echo
+
+    LASTD=$(ls /dev/?d? -1 | cut -c6- | tail -n 1)
+    lsblk -o NAME,TRAN,MODEL,SIZE,FSTYPE,LABEL
+    echo 
+    read -p "Enter a disk name for MybookLive (example: sdb or sdc), by default: $LASTD: " DISK
+    echo
+    [ "$DISK" = "" ] && DISK=$LASTD
+    echo "WARNING: All current data on disk /dev/${DISK} will be lost!"
+    echo
+    read -p  "Continue (y/n)? " KEY
+    echo
+    [ ! "$KEY" = "y" ] && exit 3
+
+    # Prepare mount point
+    [ ! -d $SDX ] && mkdir -p $SDX
+    mount | grep $SDX >/dev/null && umount $SDX
+
+    echo "----- Creating partition table"
+
+    # Original disk layout from WD:
+    # primary 528M  2576M
+    # primary 2576M 4624M
+    # primary 16M 528M
+    # primary 4624M -1M
+
+    sgdisk --zap-all /dev/${DISK} >/dev/null
+    [ $? != 0 ] && exit 40
+    echo
+
+    echo "Creating partition 1 (BOOT)... "
+    sgdisk --new=1:1M:64M /dev/${DISK}
+    [ $? != 0 ] && exit 41
+    sgdisk -A 1:set:2 /dev/${DISK}                 # set the bit 2 attribute (legacy BIOS bootable) on partition 1
+
+    echo
+    echo "Creating partition 2 (PROG)... "
+    sgdisk --new=2:65M:4113M /dev/${DISK}
+    [ $? != 0 ] && exit 42
+
+    echo
+    echo "Creating partition 3 (SWAP)... "
+    sgdisk --new=3:4114M:4623M /dev/${DISK} 
+    [ $? != 0 ] && exit 43
+
+    echo
+    echo "Creating partition 4 (DATA)... "
+    sgdisk --new=4:4624M:-1M /dev/${DISK}
+    [ $? != 0 ] && exit 44
+
+    sync; sleep 1
+
+    if [ ! -e ${DISK}1 -a -e ${DISK}2 -a -e ${DISK}3 -a -e ${DISK}4 ]; then
+	echo
+	echo "Error creating partition(s)"
+	echo
+	exit 5
+    fi
+
+    echo
+    echo "----- Formatting partitions"
+    echo
+
+    dd if=/dev/zero of=/dev/${DISK}1 seek=0 bs=4096 count=2 2>/dev/null
+    mke2fs -q -t ext2 -c -b 4096 -m 0 -L BOOT /dev/${DISK}1
+
+    dd if=/dev/zero of=/dev/${DISK}2 seek=0 bs=4096 count=2 2>/dev/null
+    mke2fs -q -t ext3 -b 4096 -m 5 -L PROG /dev/${DISK}2
+
+    echo
+    echo "----- Formating SWAP"
+    echo
+
+    dd if=/dev/zero of=/dev/${DISK}3 seek=0 bs=4096 count=2 2>/dev/null
+    mkswap -L SWAP /dev/${DISK}3 >/dev/null
+
+    echo
+    echo "----- Writing firmware to disk: ROOTFS... "
+    echo
+    mount /dev/${DISK}2 $SDX
+    [ $? != 0 ] && exit 6
+    tar -zxf $FWROOTFS -C $SDX
+    [ -f $SDX/bin/su ] && chmod 4555 $SDX/bin/busybox                     # set SUID for su to work properly
+    [ -f $SDX/usr/bin/lua ] && chmod +s $SDX/usr/bin/lua                  # some lua fix
+    [ -d $SDX/etc/lighttpd/conf.d ] && rm -f $SDX/etc/lighttpd/conf.d/*   # .conf here writes late
+    umount $SDX
+
+    echo
+    echo "----- Writing firmware to disk: KERNEL... "
+    echo
+    mount /dev/${DISK}1 $SDX
+    tar -zxf $FWKERN -C $SDX boot
+    [ -d $SDX/lost+found ] && rmdir $SDX/lost+found
+    umount $SDX
+
+    mount /dev/${DISK}2 $SDX
+    tar -zxf $FWKERN -C $SDX lib
+    tar -zxf $FWKERN -C $SDX etc
+    umount $SDX
+
+    echo
+    echo "----- Writing firmware to disk: CONFIG... "
+    echo
+    mount /dev/${DISK}2 $SDX
+    tar -zxp --same-owner -f $FWFILES -C $SDX		# preserve permissions and ownersips
+    umount $SDX
+
+    echo
+    echo "----- Creating data volume: DATA... "
+    echo
+    echo "      If you are installing this firmware for a first time, say 'y'"
+    echo "      If the data partition was created earlier, and you want to preserve"
+    echo "      existing data on it, say 'n'"
+    echo
+    read -p "      Create data volume? (y/n)? " KEY
+    if [ "$KEY" = "y" ]; then
+        echo
+        echo "----- Formatting data volume... "
+        echo
+
+        dd if=/dev/zero of=/dev/${DISK}4 bs=4096 count=2 2>/dev/null
+        mke2fs -q -t ext4 -b ${PAGESIZE} -m 0 -L DATA /dev/${DISK}4
+        sync; sleep 1
+
+	echo
+        echo "----- Creating working directories on data volume... "
+        echo
+
+        [ ! -d $SDX ] && mkdir $SDX
+        mount /dev/${DISK}4 $SDX
+        cd $SDX
+	    mkdir -m 777 Public Media Download minidlna
+	cd $SDX/Public
+	    mkdir -m 777 watch-dir
+	    cd watch-dir
+	        mkdir -m 777 transmission rtorrent-load rtorrent-start
+	cd $SDX/Download
+	    mkdir -m 777 _incomplete
+	cd $SDX/Media
+	    ln -sr ../Download Download
+	cd $CDIR
+	umount $SDX
+	sync; sleep 1
+    fi
+    echo
+    echo All done. This is a new partition table on disk ${DISK}:
+    echo
+    lsblk -o NAME,TRAN,MODEL,SIZE,FSTYPE,LABEL /dev/${DISK}
+    echo
+    sync; sleep 1
+
+exit 0
