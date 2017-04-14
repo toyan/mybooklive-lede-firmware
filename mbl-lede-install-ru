@@ -5,21 +5,52 @@
 #
 clear
 echo 
-echo "  Скрипт установки прошивки LEDE для WD MyBook Live (Single)"
-echo "  =========================================================="
+echo "  Скрипт установки прошивки LEDE для MyBookLive Single"
+echo "  ===================================================="
 echo
 
 . ./.fwver
-FWKERN="mbl-lede-kernel.$KERN-ps$PAGESIZE-v$VERS.tar.gz"
-FWROOTFS="mbl-lede-rootfs.$LEDEREL-v$VERS.tar.gz"
-FWFILES="mbl-lede-files.v$VERS.tar.gz"
+FWKERN="mbl-lede-kernel.$KERN-ps$PAGESIZE.tar.gz"
+FWROOTFS="mbl-lede-rootfs.$LEDEREL.tar.gz"
+FWFILES="mbl-lede-files.tar.gz"
+FWDUOADDON="mbl-lede-duoaddon.tar.gz"
+
 SDX="$HOME/mbl-disk-sdx"
 CDIR="$PWD"
 
     echo
+    echo "Выберите вариант:"
+    echo
+    echo "   1 - параметры PageSize ядра и BlockSize файловой системы = 4K"
+    echo "   2 - параметры PageSize ядра и BlockSize файловой системы = 16K"
+    echo
+    read -p "По умолчанию 1 :" KEY
+
+    UTILS="sgdisk mke2fs lsblk"
+    case $KEY in
+	2)      
+	    UTILS="$UTILS fuseext2"
+	    PSZ=16K; BSZ=16384
+        ;;
+	*)
+	    PSZ=4K; BSZ=4096
+        ;;
+    esac
+
+    FWKERN="mbl-lede-kernel.$KERN-ps$PSZ.tar.gz"
+
+    echo
+    echo
+    echo "Устанавливать дополнительные модули поддрежки RAID и USB (y/n)?"
+    echo
+    read -p "По умолчанию 'n': " KEY
+    DUO=false
+    [ "$KEY" = "y" ] && DUO=true
+
+    echo
     echo -n  "----- Проверка доступности используемых утилит... "
     R=0
-    for F in "sgdisk" "mke2fs" "lsblk"; do
+    for F in $UTILS; do
 	E=0
 	IFSSAVE="$IFS"; IFS=":"
 	for P in $PATH; do
@@ -69,6 +100,7 @@ CDIR="$PWD"
     # Prepare mount point
     [ ! -d $SDX ] && mkdir -p $SDX
     mount | grep $SDX >/dev/null && umount $SDX
+
 
     echo "----- Создание таблицы разделов"
 
@@ -126,7 +158,7 @@ CDIR="$PWD"
     echo
 
     dd if=/dev/zero of=/dev/${DISK}3 seek=0 bs=4096 count=2 2>/dev/null
-    mkswap -L SWAP /dev/${DISK}3 >/dev/null
+    echo "y" | mkswap -b ${BSZ} -L SWAP /dev/${DISK}3 >/dev/null 2>/dev/null
 
     echo
     echo "----- Запись прошивки на диск: ROOTFS... "
@@ -157,6 +189,7 @@ CDIR="$PWD"
     echo
     mount /dev/${DISK}2 $SDX
     tar -zxp --same-owner -f $FWFILES -C $SDX		# preserve permissions and ownersips
+    [ DUO ] && tar -zxp -f $FWDUOADDON -C $SDX
     umount $SDX
 
     echo
@@ -173,15 +206,20 @@ CDIR="$PWD"
         echo
 
         dd if=/dev/zero of=/dev/${DISK}4 bs=4096 count=2 2>/dev/null
-        mke2fs -q -t ext4 -b ${PAGESIZE} -m 0 -L DATA /dev/${DISK}4
+	
+        echo "y" | mke2fs -q -t ext4 -b ${BSZ} -m 0 -L DATA /dev/${DISK}4 2>/dev/null
+	[ $? != 0 ] && exit 6
         sync; sleep 1
-
+exit
 	echo
         echo "----- Создание рабочих папок на разделе данных... "
         echo
-
         [ ! -d $SDX ] && mkdir $SDX
-        mount /dev/${DISK}4 $SDX
+	if [ "$BSZ" = "4096" ]; then
+	    mount /dev/${DISK}4 $SDX
+	else
+	    fuse-ext2 -o rw+ /dev/${DISK}4 $SDX
+	fi
         cd $SDX
 	    mkdir -m 777 Public Media Download minidlna
 	cd $SDX/Public
@@ -193,7 +231,14 @@ CDIR="$PWD"
 	cd $SDX/Media
 	    ln -sr ../Download Download
 	cd $CDIR
-	umount $SDX
+	if [ "$BSZ" = "4096" ]; then
+	    umount $SDX
+	else
+	    umount $SDX
+	    fuse-ext2 -o ro /dev/${DISK}4 $SDX
+	    killall fuse-ext2
+	    umount $SDX
+	fi
 	sync; sleep 1
     fi
     echo

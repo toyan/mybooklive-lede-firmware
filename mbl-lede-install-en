@@ -10,9 +10,11 @@ echo "  ========================================================================
 echo
 
 . ./.fwver
-FWKERN="mbl-lede-kernel.$KERN-ps$PAGESIZE-v$VERS.tar.gz"
-FWROOTFS="mbl-lede-rootfs.$LEDEREL-v$VERS.tar.gz"
-FWFILES="mbl-lede-files.v$VERS.tar.gz"
+FWKERN="mbl-lede-kernel.$KERN-ps$PAGESIZE.tar.gz"
+FWROOTFS="mbl-lede-rootfs.$LEDEREL.tar.gz"
+FWFILES="mbl-lede-files.tar.gz"
+FWDUOADDON="mbl-lede-duoaddon.tar.gz"
+
 SDX="$HOME/mbl-disk-sdx"
 CDIR="$PWD"
 
@@ -32,7 +34,7 @@ CDIR="$PWD"
 	if [ $E = 0 ]; then
 	    R=1
 	    echo
-	    echo "Required file '$F' not found."
+	    echo "Required executable file '$F' not found."
 	fi
     done
     [ $R = 1 ] && exit 1
