@@ -111,7 +111,7 @@ CDIR="$PWD"
     # primary 4624M -1M
 
     sgdisk --zap-all /dev/${DISK} >/dev/null
-    [ $? != 0 ] && exit 40
+    sync; sleep 1
     echo
 
     echo "Создание раздела 1 (BOOT)... "
